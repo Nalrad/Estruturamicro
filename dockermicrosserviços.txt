@@ -1,0 +1,153 @@
+Observações importantes:
+- Ler a documentação referente ao docker para edição do cenário de microsserviços no conteiner; Na mesma
+há oreintações para criação de aplicações, tipo BD, juntamente com a criação do conteiner.
+- Para criação e edição de um banco dados (BD) podemos usar um gerenciador de BD (de sua preferência), logado ao host de microsserviços através do IP.
+- Uma vez logado ao host, podemos criar o BD, como no exemplo abaixo:
+	
+CREATE TABLE dados (
+    ClienteID int,
+    Nome varchar(50),
+    Sobrenome varchar(50),
+    Endereco varchar(150),
+    Telefone int,
+    Cidade varchar(50),
+    Host varchar(50)
+);
+
+-Para testarmos a funcionalidade do conteiner, criaremos uma aplicação em PHP (edição p/ linux):
+
+logar root no host;
+acessar o dir /var/lib/docker/volumes/app
+executar ls
+acessar pasta data
+usar IDE ou editor do linux (nano, vim, etc) para criação de script, exemplo:
+
+<html>
+
+<head>
+<title>Exemplo PHP</title>
+</head>
+<body>
+
+<?php
+ini_set("display_errors", 1);
+header('Content-Type: text/html; charset=iso-8859-1');
+
+
+
+echo 'Versao Atual do PHP: ' . phpversion() . '<br>';
+
+$servername = "IP do host de microsserviços";
+$username = "root";
+$password = "Senha123";
+$database = "meubanco";
+
+// Criar conexão
+
+
+$link = new mysqli($servername, $username, $password, $database);
+
+/* check connection */
+if (mysqli_connect_errno()) {
+    printf("Connect failed: %s\n", mysqli_connect_error());
+    exit();
+}
+
+$valor_rand1 =  rand(1, 999);
+$valor_rand2 = strtoupper(substr(bin2hex(random_bytes(4)), 1));
+$host_name = gethostname();
+
+
+$query = "INSERT INTO dados (ClienteID, Nome, Sobrenome, Endereco, Telefone, Cidade, Host) VALUES ('$valor_rand1' , '$valor_rand2', '$valor_rand2', '$valor_rand2', '$valor_rand2','$host_name')";
+
+
+if ($link->query($query) === TRUE) {
+  echo "New record created successfully";
+} else {
+  echo "Error: " . $link->error;
+}
+
+?>
+</body>
+</html>
+
+
+-Para executar o scrip no host é necessário ter um servidor WEB (usaremos apache) e o PHP, intalados no conteiner; Faremos
+isso executando o seguinte comando (cria um novo conteiner + apache + PHP):
+
+acessar o dir: /var/lib/docker/volumes/app/_data 
+executar docker: run --name web-server -dt -p 80:80 --mount type=volume,src=app,dst=/app/ webdevops/php-apache:alpine-php7
+executar docker: ps (para verificar se aplicação está rodando)
+
+-Para replicarmos essas aplicações em outro conteiners e servidores (cluster Swarm)
+
+acessar o dir: /var/lib/docker/volumes/app/_data
+executar: docker swarm init
+após a execução faz-se a junção dos diversos servidores ao swarm criado através da porta e IP local informado pelo conteiner inicial
+
+feito isso executaremos o comando:
+
+/var/lib/docker/volumes/app/_data docker service create --name web-server --replicas 3 -dt -p 80:80 --mount type=volume,src=app,dst=/app/ webdevops/php-apache:alpine-php7
+
+obs: importante informar a quantidade de réplicas.
+
+-Para replicar um volume entre os nós executaremos os comandos:
+
+/var/lib/docker/volumes/app/_data nano /etc/exports
+
+inclua no script: /var/lib/docker/volumes/app/_data *(rw,sync,subtree_check)
+ctrl + o
+ctrl + x
+
+execute: /var/lib/docker/volumes/app/_data exportfs -ar
+execute: /var/lib/docker/volumes/app/_data mount -o v3 (IP do nó lider):/var/lib/docker/volumes/app/_data /var/lib/docker/volumes/app/_data
+
+Obs: executar o mesmo comando em todos os nós do cluster que deseja replicar o volume.
+
+-Criando proxy para replicar as requisições em todos os hosts
+
+na raiz do host lider crie um diretório (mkdir /proxy)
+
+editar escript: nano nginx.conf
+
+http {
+   
+    upstream all {
+        server IP host lider:80;
+        server IP host worker:80;
+        server IP host worker:80;
+    }
+
+    server {
+         listen 4500;
+         location / {
+              proxy_pass http://all/;
+         }
+    }
+
+}
+
+
+events { }
+
+
+
+Obs: Inclua os IPs de todos os hosts que pertecem ao cluster.
+
+a seguir execute: /proxy# nano dockerfile
+
+FROM nginx
+COPY nginx.conf /etc/nginx/nginx.conf
+ctrl + o
+ctrl + x
+
+execute  /proxy# docker build -t proxy-app . 
+(indica a imagem a ser usada e copia o arquivo de configuração do conteiner).
+
+por fim execute:
+
+ /proxy# docker container run --name my-proxy-app -dti -p 4500:4500 proxy-app
+ (para executar o conteiner)
+
+Pronto!!! (Uma estrutura de microsserviços cheirosinha e bonitinha)('_')
+
